@@ -114,4 +114,49 @@ export class CollisionSystem {
   getImpactVector() {
     return this.impactVector;
   }
+
+  /**
+   * Calculates gravitational pull towards a singularity.
+   * Uses inverse square law for magnitude.
+   * @param {THREE.Vector3} playerPosition
+   * @param {THREE.Vector3} singularityPosition
+   * @param {number} intensity
+   * @returns {THREE.Vector3}
+   */
+  calculateGravityPull(playerPosition, singularityPosition, intensity) {
+    const pull = new THREE.Vector3().subVectors(singularityPosition, playerPosition);
+    const distanceSq = Math.max(pull.lengthSq(), 1.0); // Clamp to avoid infinite force
+    const magnitude = intensity / distanceSq;
+    return pull.normalize().multiplyScalar(magnitude);
+  }
+
+  /**
+   * Calculates a slight drift factor towards the nearest obstacle.
+   * Helps simulate spatial turbulence or magnetic attraction.
+   * @param {THREE.Vector3} playerPosition
+   * @param {Array<THREE.Object3D>} obstaclesArray
+   * @returns {THREE.Vector3}
+   */
+  calculateSpatialDrift(playerPosition, obstaclesArray) {
+    const drift = new THREE.Vector3(0, 0, 0);
+    if (!obstaclesArray || obstaclesArray.length === 0) return drift;
+
+    let nearest = null;
+    let minDist = Infinity;
+
+    for (const obstacle of obstaclesArray) {
+      const dist = playerPosition.distanceTo(obstacle.position);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = obstacle;
+      }
+    }
+
+    if (nearest && minDist < 12.0) { // Drift range
+      const strength = (1.0 - (minDist / 12.0)) * 0.1;
+      drift.subVectors(nearest.position, playerPosition).normalize().multiplyScalar(strength);
+    }
+
+    return drift;
+  }
 }
