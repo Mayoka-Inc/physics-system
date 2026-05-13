@@ -1,4 +1,13 @@
+<div align="center">
+  <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=24&pause=1000&color=7aa2f7&center=true&vCenter=true&width=600&lines=Vortex:+Analyzing+Gravity+Vectors...;Calculating+Spatial+Trajectories...;Physics+Engine+Locked." alt="Typing SVG" />
+</div>
+
 # ⚡ Neon Surge | Physics System
+
+### 📊 Agent Telemetry
+<div align="center">
+  <img src="https://github-readme-activity-graph.vercel.app/graph?username=mayoka0&theme=tokyo-night&hide_border=true&area=true" width="100%" alt="Activity Graph" />
+</div>
 
 ### 🤖 Meet the Agent: Vortex
 **Vortex, the Physics Agent**, is the enforcer of the Grid's immutable laws. He calculates the trajectory of every photon and the momentum of every data packet. Forged in the gravitational well of a dying star, Vortex ensures that no collision goes uncounted and no impact is without consequence. He is the master of spatial integrity.
@@ -10,26 +19,17 @@
 *   **Force Accumulation**: Accumulates repulsive force vectors from nearby hazards to influence the Siphon Agent's flight path.
 
 ### 🛠️ Technical Spec
-Vortex operates on a high-precision **Spatial Validation Loop**.
-- **Swept-Sphere Math**: Implements `_testSweptSphere` using segment-sphere intersection (clamping projected center point to the interval [0, 1]).
-- **Spatial Culling**: The `_broadPhase` filter limits collision checks to obstacles within a 25-unit Z-depth and 20-unit X-width window.
-- **Proximity Logic**: Distinguishes between "Hard Hits" (radii overlap) and "Near Misses" (within an 8.0 unit threshold), applying scaled force vectors to the `impactVector`.
+Vortex operates on a high-precision **Spatial Validation Loop** designed to maintain physical integrity at extreme velocities. The cornerstone of this system is the **Swept-Sphere Math** algorithm, which addresses the common "tunneling" issue in game physics. By treating the player's movement as a continuous volume rather than discrete points, Vortex can detect collisions that occur between frames. It implements this by calculating the distance between the player's movement segment and the centers of spherical obstacle volumes, effectively ensuring that no data hazard is bypassed.
 
-### 🌐 The 10-Agent Architecture
-Neon Surge is powered by a collaborative network of 10 specialized agents, each mastering a unique domain of the Data Stream.
+To maintain a consistent 60 FPS, Vortex utilizes a **BVH Lite (Broad-phase)** spatial partitioning strategy. This filter significantly reduces the computational overhead by limiting collision checks to objects within the immediate vicinity of the player—specifically a 25-unit Z-depth and 20-unit X-width window. For objects that pass the broad-phase check, the system applies proximity logic to distinguish between "Hard Hits" (radii overlap) and "Near Misses." Near misses trigger scaled repulsive force vectors that influence the player's trajectory, adding a layer of tactile feedback to the navigation experience.
 
-| Agent | Role | Repository |
-| :--- | :--- | :--- |
-| **Atlas** | Core Engine & Orchestration | `core-engine` |
-| **Cerebro** | Input Processing & Mapping | `input-system` |
-| **Aura** | Procedural Audio & Soundscapes | `audio-system` |
-| **Vortex** | Physics & Collision Detection | `physics-system` |
-| **Iris** | User Interface & Neon HUD | `ui-system` |
-| **Nova** | Player Entity & Controller | `player-entity` |
-| **Obsidian** | Obstacle Intelligence | `obstacle-entity` |
-| **Nexus** | Game Rules & State Logic | `game-logic` |
-| **Chronos** | Lore & Documentation | `design-docs` |
-| **Forge** | Build & Deployment | `build-config` |
+---
+
+<div align="center">
+  <img src="https://github-readme-stats.vercel.app/api/pin/?username=mayoka0&repo=physics-system&theme=tokyonight&hide_border=true&title_color=7aa2f7&icon_color=7aa2f7&text_color=ffffff" alt="Repo Card" />
+</div>
+
+🔗 **Part of the [Neon Surge Ecosystem](https://github.com/mayoka0/mayoka0#-neon-surge-architecture)**
 
 ### 🚀 How to Initialize
 1. Ensure [Node.js](https://nodejs.org/) is active.
