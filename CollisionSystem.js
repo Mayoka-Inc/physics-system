@@ -14,12 +14,11 @@ export class CollisionSystem {
     this.obstacleData = new Float32Array(this.MAX_OBSTACLES * 4);
     this.obstacleCount = 0;
 
-    // 2. Broad-Phase Spatial Grid (Linked List in Arrays)
-    // Partitions space into cells for O(1) average lookup of nearby hazards.
-    this.CELL_SIZE = 8;
-    this.GRID_RES = 32; // 32x32 cells covering 256x256 area
-    this.gridHeads = new Int32Array(this.GRID_RES * this.GRID_RES);
-    this.obstacleNext = new Int32Array(this.MAX_OBSTACLES);
+    // 2. Broad-Phase: Bounding Volume Hierarchy (BVH)
+    // Replaces the fixed-size spatial grid with an adaptive tree structure.
+    this.bvhNodes = new Float32Array(this.MAX_OBSTACLES * 4 * 2); // [minX, minZ, maxX, maxZ, isLeaf, dataPtr/child1, child2, count]
+    this.bvhIndices = new Int32Array(this.MAX_OBSTACLES);
+    this.bvhNodeCount = 0;
 
     this.lastPlayerPos = new THREE.Vector3();
     this.impactVector = new THREE.Vector3();
@@ -52,38 +51,68 @@ export class CollisionSystem {
   }
 
   /**
-   * Rebuilds the spatial grid centered around the player.
-   * Efficiently bins obstacles into grid cells for fast spatial querying.
+   * Builds a Bounding Volume Hierarchy for the obstacle set.
+   * Uses a recursive top-down approach to partition space based on object centroids.
    */
-  _buildSpatialGrid(playerPos) {
-    this.gridHeads.fill(-1);
-    const data = this.obstacleData;
-    const next = this.obstacleNext;
-    const res = this.GRID_RES;
-    const cellSize = this.CELL_SIZE;
+  _buildBVH() {
+    this.bvhNodeCount = 0;
+    for (let i = 0; i < this.obstacleCount; i++) this.bvhIndices[i] = i;
+    if (this.obstacleCount > 0) this._recursiveBuildBVH(0, this.obstacleCount);
+  }
+
+  _recursiveBuildBVH(start, end) {
+    const nodeIdx = this.bvhNodeCount++;
+    const base = nodeIdx * 8;
     
-    // Offset grid so player is always at the center of the grid logic
-    const gridOffsetX = playerPos.x - (res * cellSize) * 0.5;
-    const gridOffsetZ = playerPos.z - (res * cellSize) * 0.5;
-
-    for (let i = 0; i < this.obstacleCount; i++) {
-      const idx = i << 2;
-      const gx = Math.floor((data[idx] - gridOffsetX) / cellSize);
-      const gz = Math.floor((data[idx + 2] - gridOffsetZ) / cellSize);
-
-      if (gx >= 0 && gx < res && gz >= 0 && gz < res) {
-        const gridIdx = (gz * res) + gx;
-        next[i] = this.gridHeads[gridIdx];
-        this.gridHeads[gridIdx] = i;
-      } else {
-        next[i] = -1;
-      }
+    // Calculate AABB for this set
+    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+    for (let i = start; i < end; i++) {
+      const idx = this.bvhIndices[i] << 2;
+      const x = this.obstacleData[idx];
+      const z = this.obstacleData[idx + 2];
+      const r = this.obstacleData[idx + 3];
+      minX = Math.min(minX, x - r);
+      minZ = Math.min(minZ, z - r);
+      maxX = Math.max(maxX, x + r);
+      maxZ = Math.max(maxZ, z + r);
     }
+
+    this.bvhNodes[base] = minX;
+    this.bvhNodes[base + 1] = minZ;
+    this.bvhNodes[base + 2] = maxX;
+    this.bvhNodes[base + 3] = maxZ;
+
+    const count = end - start;
+    if (count <= 4) { // Leaf node
+      this.bvhNodes[base + 4] = 1; // isLeaf
+      this.bvhNodes[base + 5] = start;
+      this.bvhNodes[base + 6] = count;
+      return nodeIdx;
+    }
+
+    // Split along longest axis
+    const dx = maxX - minX;
+    const dz = maxZ - minZ;
+    const axis = dx > dz ? 0 : 2; // 0 for X, 2 for Z in obstacleData
+
+    // Sort partition
+    const sub = this.bvhIndices.subarray(start, end);
+    sub.sort((a, b) => 
+      this.obstacleData[(a << 2) + axis] - this.obstacleData[(b << 2) + axis]
+    );
+
+    const mid = (start + end) >> 1;
+
+    this.bvhNodes[base + 4] = 0; // Not leaf
+    this.bvhNodes[base + 5] = this._recursiveBuildBVH(start, mid);
+    this.bvhNodes[base + 6] = this._recursiveBuildBVH(mid, end);
+    
+    return nodeIdx;
   }
 
   /**
    * Main collision entry point.
-   * Uses TypedArray-based spatial partitioning to handle 10x more entities than the original loop.
+   * Uses BVH traversal to handle entities significantly faster than the grid for large scenes.
    */
   checkCollision(playerMesh, obstaclesArray) {
     if (!playerMesh || !obstaclesArray) return false;
@@ -96,34 +125,44 @@ export class CollisionSystem {
     let collided = false;
     this.impactVector.set(0, 0, 0);
 
-    // WASM-Style Optimization: Sync data once and build spatial index
+    // WASM-Style Optimization: Sync data once and build BVH
     this._syncObstacleData(obstaclesArray);
-    this._buildSpatialGrid(currentPos);
+    this._buildBVH();
+
+    if (this.obstacleCount === 0) return false;
 
     const lpx = this.lastPlayerPos.x;
     const lpy = this.lastPlayerPos.y;
     const lpz = this.lastPlayerPos.z;
 
-    // Broad-phase: Query the local grid neighborhood (9x9 cells around player)
-    const res = this.GRID_RES;
-    const halfRes = res >> 1; 
-    const windowSize = 4; // Covers ~64 units around player
-    
-    for (let gz = halfRes - windowSize; gz <= halfRes + windowSize; gz++) {
-      for (let gx = halfRes - windowSize; gx <= halfRes + windowSize; gx++) {
-        if (gx < 0 || gx >= res || gz < 0 || gz >= res) continue;
-        
-        let obsIdx = this.gridHeads[(gz * res) + gx];
-        while (obsIdx !== -1) {
+    // Broad-phase: Traverse BVH
+    const stack = [0];
+    while (stack.length > 0) {
+      const nodeIdx = stack.pop();
+      const base = nodeIdx * 8;
+      
+      // AABB check
+      const pr = this.PLAYER_RADIUS;
+      if (px + pr < this.bvhNodes[base] || 
+          px - pr > this.bvhNodes[base + 2] ||
+          pz + pr < this.bvhNodes[base + 1] || 
+          pz - pr > this.bvhNodes[base + 3]) {
+        continue;
+      }
+
+      if (this.bvhNodes[base + 4] === 1) { // Leaf
+        const start = this.bvhNodes[base + 5];
+        const count = this.bvhNodes[base + 6];
+        for (let i = 0; i < count; i++) {
+          const obsIdx = this.bvhIndices[start + i];
           const idx = obsIdx << 2;
           const ox = this.obstacleData[idx];
           const oy = this.obstacleData[idx + 1];
           const oz = this.obstacleData[idx + 2];
           const or = this.obstacleData[idx + 3];
           
-          const threshold = this.PLAYER_RADIUS + or;
+          const threshold = pr + or;
 
-          // Swept Sphere Check: Using raw float math to avoid Vector3 overhead
           let isHit = false;
           if (this.hasLastPos) {
             isHit = this._testSweptSphereRaw(lpx, lpy, lpz, px, py, pz, ox, oy, oz, threshold);
@@ -139,7 +178,7 @@ export class CollisionSystem {
             this._applyImpactRaw(px, py, pz, ox, oy, oz, 2.0);
           }
 
-          // Proximity Impact: Scaled feedback based on hazard distance
+          // Proximity Impact
           const dx = px - ox;
           const dy = py - oy;
           const dz = pz - oz;
@@ -149,9 +188,10 @@ export class CollisionSystem {
             const intensity = 1.0 - (distance / this.NEARBY_THRESHOLD);
             this._applyImpactRaw(px, py, pz, ox, oy, oz, intensity * 0.5);
           }
-
-          obsIdx = this.obstacleNext[obsIdx];
         }
+      } else {
+        stack.push(this.bvhNodes[base + 5]);
+        stack.push(this.bvhNodes[base + 6]);
       }
     }
 
@@ -237,14 +277,14 @@ export class CollisionSystem {
   }
 
   /**
-   * Optimized Spatial Drift using the broad-phase grid.
+   * Optimized Spatial Drift using BVH traversal.
    */
   calculateSpatialDrift(playerPosition, obstaclesArray) {
     if (!obstaclesArray || obstaclesArray.length === 0) return new THREE.Vector3(0, 0, 0);
 
     // Sync and partition data
     this._syncObstacleData(obstaclesArray);
-    this._buildSpatialGrid(playerPosition);
+    this._buildBVH();
 
     const px = playerPosition.x;
     const py = playerPosition.y;
@@ -253,16 +293,26 @@ export class CollisionSystem {
     let nearestIdx = -1;
     let minDistSq = Infinity;
 
-    const res = this.GRID_RES;
-    const halfRes = res >> 1;
-    const range = Math.ceil(12.0 / this.CELL_SIZE);
+    const stack = [0];
+    const range = 12.0;
 
-    for (let gz = halfRes - range; gz <= halfRes + range; gz++) {
-      for (let gx = halfRes - range; gx <= halfRes + range; gx++) {
-        if (gx < 0 || gx >= res || gz < 0 || gz >= res) continue;
-        
-        let obsIdx = this.gridHeads[(gz * res) + gx];
-        while (obsIdx !== -1) {
+    while (stack.length > 0) {
+      const nodeIdx = stack.pop();
+      const base = nodeIdx * 8;
+      
+      // AABB check with range
+      if (px + range < this.bvhNodes[base] || 
+          px - range > this.bvhNodes[base + 2] ||
+          pz + range < this.bvhNodes[base + 1] || 
+          pz - range > this.bvhNodes[base + 3]) {
+        continue;
+      }
+
+      if (this.bvhNodes[base + 4] === 1) {
+        const start = this.bvhNodes[base + 5];
+        const count = this.bvhNodes[base + 6];
+        for (let i = 0; i < count; i++) {
+          const obsIdx = this.bvhIndices[start + i];
           const idx = obsIdx << 2;
           const dx = px - this.obstacleData[idx];
           const dy = py - this.obstacleData[idx + 1];
@@ -273,8 +323,10 @@ export class CollisionSystem {
             minDistSq = dSq;
             nearestIdx = obsIdx;
           }
-          obsIdx = this.obstacleNext[obsIdx];
         }
+      } else {
+        stack.push(this.bvhNodes[base + 5]);
+        stack.push(this.bvhNodes[base + 6]);
       }
     }
 
